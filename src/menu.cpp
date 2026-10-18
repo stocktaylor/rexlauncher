@@ -10,6 +10,7 @@
 #include <rex/ui/windowed_app_context.h>
 
 #include "in_game.h"
+#include "keyboard.h"
 #include "options.h"
 #include "settings.h"
 
@@ -39,21 +40,73 @@ LaunchMenu::LaunchMenu(rex::ui::ImGuiDrawer* drawer, rex::ui::WindowedAppContext
 // --- Rows -----------------------------------------------------------------------
 
 void LaunchMenu::BuildRows() {
-  rows_.push_back({RowKind::kPlay, {}});
+  auto& rows = main_rows_;
+  rows.push_back({RowKind::kPlay, {}});
   if (config_.standard_options) {
-    rows_.push_back({RowKind::kOption, ResolutionScaleOption()});
-    rows_.push_back({RowKind::kOption, DisplayModeOption()});
-    rows_.push_back({RowKind::kWindowSize, {}});
-    rows_.push_back({RowKind::kOption, UpscalingFilterOption()});
-    rows_.push_back({RowKind::kOption, VSyncOption()});
+    rows.push_back({RowKind::kOption, ResolutionScaleOption()});
+    if (config_.display_options) {
+      rows.push_back({RowKind::kOption, DisplayModeOption()});
+      rows.push_back({RowKind::kWindowSize, {}});
+    }
+    rows.push_back({RowKind::kOption, UpscalingFilterOption()});
+    rows.push_back({RowKind::kOption, VSyncOption()});
+  }
+  if (config_.controls) {
+    rows.push_back({RowKind::kControls, {}});
   }
   for (const auto& option : config_.extra) {
-    rows_.push_back({RowKind::kOption, option});
+    rows.push_back({RowKind::kOption, option});
   }
   if (in_game_) {
-    rows_.push_back({RowKind::kRestart, {}});
+    rows.push_back({RowKind::kRestart, {}});
   }
-  rows_.push_back({RowKind::kQuit, {}});
+  rows.push_back({RowKind::kQuit, {}});
+  rows_ = main_rows_;
+}
+
+void LaunchMenu::BuildPadRows() {
+  rows_.clear();
+  rows_.push_back({RowKind::kBack, {}});
+  for (size_t i = 0; i < pads_.size(); ++i) {
+    Row row{RowKind::kPad, {}, pads_[i]};
+    // Number pads with the same name: "Xbox Controller 2".
+    auto same_name = [&](const Pad& pad) { return pad.name == pads_[i].name; };
+    if (std::count_if(pads_.begin(), pads_.end(), same_name) > 1) {
+      auto before = std::count_if(pads_.begin(), pads_.begin() + i, same_name);
+      row.pad.name += " " + std::to_string(before + 1);
+    }
+    rows_.push_back(std::move(row));
+  }
+  if (KeyboardAvailable()) {
+    rows_.push_back({KeyboardMapped() ? RowKind::kKeyboard : RowKind::kMapKeyboard, {}});
+  }
+}
+
+// Called every frame: notes which pads are pressed and, on the Controls page,
+// follows pads being connected and disconnected.
+void LaunchMenu::RefreshPads() {
+  std::vector<Pad> pads = ConnectedPads();
+  double now = ImGui::GetTime();
+  for (const auto& pad : pads) {
+    if (pad.active) {
+      pad_pressed_[pad.key] = now;
+    }
+  }
+  bool changed = !std::equal(pads.begin(), pads.end(), pads_.begin(), pads_.end(),
+                             [](const Pad& a, const Pad& b) { return a.key == b.key; });
+  pads_ = std::move(pads);
+  if (!changed || page_ != Page::kControls) {
+    return;
+  }
+  RowKind focused_kind = rows_[focus_].kind;
+  std::string focused = focused_kind == RowKind::kPad ? rows_[focus_].pad.key : "";
+  BuildPadRows();
+  focus_ = 0;
+  for (size_t i = 0; i < rows_.size(); ++i) {
+    if (rows_[i].kind == focused_kind && rows_[i].pad.key == focused) {
+      focus_ = i;
+    }
+  }
 }
 
 // Whether a change shows only after the process restarts: before the game,
@@ -92,9 +145,16 @@ bool LaunchMenu::Enabled(const Row& row) const {
       // Init-only cvars are refused once the runtime is up.
       return !in_game_ || info->lifecycle != rex::cvar::Lifecycle::kInitOnly;
     }
+    case RowKind::kPad:
+      return !IsLockedByCommandLine(kPortsCvar);
     default:
       return true;
   }
+}
+
+bool LaunchMenu::Cycles(const Row& row) const {
+  return row.kind == RowKind::kOption || row.kind == RowKind::kWindowSize ||
+         row.kind == RowKind::kPad;
 }
 
 std::string LaunchMenu::Label(const Row& row) const {
@@ -116,6 +176,16 @@ std::string LaunchMenu::Label(const Row& row) const {
       return "Window size";
     case RowKind::kOption:
       return row.option.label;
+    case RowKind::kControls:
+      return "Controls";
+    case RowKind::kBack:
+      return "Back";
+    case RowKind::kPad:
+      return row.pad.name;
+    case RowKind::kKeyboard:
+      return "Keyboard (virtual controller)";
+    case RowKind::kMapKeyboard:
+      return "Map keyboard";
   }
   return {};
 }
@@ -138,6 +208,32 @@ std::optional<std::string> LaunchMenu::Value(const Row& row) const {
       }
       return shown;
     }
+    case RowKind::kControls: {
+      size_t count = pads_.size() + (KeyboardMapped() ? 1 : 0);
+      if (count == 0) {
+        return std::string("No controllers");
+      }
+      return std::to_string(count) + (count == 1 ? " controller" : " controllers");
+    }
+    case RowKind::kKeyboard:
+      // The keyboard/mouse device always feeds player 1 (ports.h).
+      return std::string(KeyboardLocked() ? "Player 1  (command line)" : "Player 1");
+    case RowKind::kMapKeyboard:
+      return std::string("Play with the keyboard");
+    case RowKind::kPad: {
+      int setting = PortSetting(row.pad.key);
+      std::optional<int> port = CurrentPort(pads_, row.pad.key);
+      std::string shown = setting == kOff ? "Off"
+                          : port         ? "Player " + std::to_string(*port + 1)
+                                         : "Not used";
+      if (setting == kAuto) {
+        shown += "  (auto)";
+      }
+      if (IsLockedByCommandLine(kPortsCvar)) {
+        shown += "  (command line)";
+      }
+      return shown;
+    }
     default:
       return std::nullopt;
   }
@@ -145,12 +241,18 @@ std::optional<std::string> LaunchMenu::Value(const Row& row) const {
 
 std::vector<std::string> LaunchMenu::ManagedCvars() const {
   std::vector<std::string> cvars;
-  for (const auto& row : rows_) {
+  for (const auto& row : main_rows_) {
     if (row.kind == RowKind::kOption) {
       cvars.push_back(row.option.cvar);
     } else if (row.kind == RowKind::kWindowSize) {
       cvars.push_back("window_width");
       cvars.push_back("window_height");
+    } else if (row.kind == RowKind::kControls) {
+      cvars.push_back(kPortsCvar);
+      if (KeyboardAvailable()) {
+        auto keyboard = KeyboardCvars();
+        cvars.insert(cvars.end(), keyboard.begin(), keyboard.end());
+      }
     }
   }
   return cvars;
@@ -166,6 +268,8 @@ void LaunchMenu::Change(Row& row, int dir) {
     CycleWindowSize(dir);
   } else if (row.kind == RowKind::kOption) {
     CycleChoice(row.option, dir);
+  } else if (row.kind == RowKind::kPad) {
+    CyclePortSetting(row.pad.key, dir);
   }
 }
 
@@ -188,6 +292,16 @@ void LaunchMenu::Activate(size_t index) {
     case RowKind::kPlay:
       Play();
       break;
+    case RowKind::kControls:
+      OpenControls();
+      break;
+    case RowKind::kBack:
+      CloseControls();
+      break;
+    case RowKind::kKeyboard:
+    case RowKind::kMapKeyboard:
+      OpenKeyboard();
+      break;
     case RowKind::kRestart:
     case RowKind::kQuit:
       if (in_game_ && confirm_ != index) {
@@ -207,6 +321,10 @@ void LaunchMenu::Activate(size_t index) {
 }
 
 void LaunchMenu::Handle(Action action) {
+  if (page_ == Page::kKeyboard) {
+    HandleKeyboard(action);
+    return;
+  }
   switch (action) {
     case Action::kUp:
       MoveFocus(-1);
@@ -224,7 +342,9 @@ void LaunchMenu::Handle(Action action) {
       Activate(focus_);
       break;
     case Action::kBack:
-      if (in_game_) {
+      if (page_ == Page::kControls) {
+        CloseControls();
+      } else if (in_game_) {
         Play();  // B resumes
       } else {
         Quit();
@@ -239,6 +359,9 @@ void LaunchMenu::Handle(Action action) {
 void LaunchMenu::Play() {
   if (finished_) {
     return;
+  }
+  if (page_ == Page::kKeyboard) {
+    CloseKeyboard(true);  // keys mapped, then F1/Start: keep the keyboard on
   }
   SaveToConfig(paths_.config_path, ManagedCvars());
   if (in_game_) {
@@ -289,6 +412,20 @@ void LaunchMenu::LeaveGameMenu() {
   g.releasing = true;
   g.open = false;
   SendSystemUINotification(false);
+}
+
+void LaunchMenu::OpenControls() {
+  confirm_.reset();
+  main_focus_ = focus_;
+  page_ = Page::kControls;
+  BuildPadRows();
+  focus_ = rows_.size() > 1 ? 1 : 0;  // the first controller
+}
+
+void LaunchMenu::CloseControls() {
+  page_ = Page::kMain;
+  rows_ = main_rows_;
+  focus_ = main_focus_;
 }
 
 }  // namespace rexlauncher

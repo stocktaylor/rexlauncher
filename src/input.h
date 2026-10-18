@@ -49,6 +49,9 @@ class MenuInput {
   double next_repeat_ = 0.0;
 };
 
+// Whether any button or trigger is held on the pad.
+bool PadHasInput(SDL_Gamepad* pad);
+
 // Reads the pads the SDK's input driver has open (without opening any):
 // whether anything is pressed, and whether Back + Start are held together.
 bool ReadPadsForMenu(bool& chord);

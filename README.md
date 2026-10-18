@@ -2,8 +2,8 @@
 
 An in-window launch menu for rexglue recompilation projects, in the style of
 PPSSPP: the game's own window opens on a menu (Play, rendering resolution,
-display mode, window size, upscaling filter, VSync, game-specific options,
-Quit), and Play hands the window over to the game. Built for a TV or a Steam
+display mode, window size, upscaling filter, VSync, controls, game-specific
+options, Quit), and Play hands the window over to the game. Built for a TV or a Steam
 Deck: big rows scaled to the screen, full controller navigation.
 
 | Input | Action |
@@ -56,6 +56,33 @@ void OnPostSetup() override {
   rexlauncher::EnableInGameMenu(imgui_drawer(), app_context(), runtime());
 }
 ```
+
+## Controls
+
+The Controls row opens a page listing the connected controllers. Each one is
+set to Auto, Player 1-4 or Off (left/right). Pressing X or Y on a controller
+lights up its row, to tell identical pads apart.
+
+- Auto is the SDK's default: the Nth controller connected plays as player N,
+  skipping players another controller was set to. Several controllers set to
+  the same player merge, as the SDK already does for one player's devices.
+- The keyboard/mouse device stays on player 1.
+- Map keyboard (at the bottom of the list) opens a page listing every
+  controller input with two key slots. Choose a slot and press a key (with
+  Shift/Ctrl/Alt held for a combination); Esc cancels, Delete or right-click
+  clears. A key already used elsewhere moves to the new input. Leaving the
+  page turns the keyboard on as a virtual controller (the SDK's `mnk_mode`),
+  listed as "Keyboard (virtual controller)"; choosing that row edits the keys
+  again or removes it. The keys are the SDK's `keybind_*` cvars, saved with
+  the other settings. `Config::controls = false` hides the page.
+- Choices are saved in the `controller_ports` cvar, keyed by the controller's
+  SDL GUID and, for identical controllers, their connection order
+  (`<guid>#0=2,<guid>#1=off`).
+- They apply through a device assignment (`rex::input::DeviceAssignment`)
+  that `EnableInGameMenu` installs in the runtime's input system, so a game
+  needs that call for the page to have any effect; changes made in the
+  in-game menu apply at once. A game that installs its own assignment
+  afterwards replaces it.
 
 ## In-game menu
 

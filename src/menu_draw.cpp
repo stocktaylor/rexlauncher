@@ -11,6 +11,7 @@
 
 #include "draw.h"
 #include "fonts.h"
+#include "keyboard.h"
 #include "theme.h"
 
 namespace rexlauncher {
@@ -19,7 +20,13 @@ void LaunchMenu::OnDraw(ImGuiIO& io) {
   if (finished_) {
     return;
   }
+  RefreshPads();
+  // Before Poll: a key being bound must not also move the focus.
+  bool keys_held = page_ == Page::kKeyboard && UpdateKeyCapture();
   for (Action action : input_.Poll()) {
+    if (keys_held) {
+      continue;
+    }
     Handle(action);
     if (finished_) {
       return;
@@ -53,9 +60,20 @@ void LaunchMenu::OnDraw(ImGuiIO& io) {
   // Title
   float margin = 56.0f * s;
   PaintText(dl, BoldFont(), 46.0f * s, ImVec2(margin, 48.0f * s), kText, config_.title, 0.0f, 0.0f);
-  if (!config_.subtitle.empty()) {
+  const std::string& subtitle =
+      page_ == Page::kControls   ? "Controls: press X or Y on a controller to light up its row"
+      : page_ == Page::kKeyboard ? "Keyboard: choose the keys for each controller input"
+                                 : config_.subtitle;
+  if (!subtitle.empty()) {
     PaintText(dl, RegularFont(), 18.0f * s, ImVec2(margin + 2.0f * s, 104.0f * s), kTextDim,
-              config_.subtitle, 0.0f, 0.0f);
+              subtitle, 0.0f, 0.0f);
+  }
+
+  if (page_ == Page::kKeyboard) {
+    DrawKeyboardPage(dl, io, s, margin, now);
+    ImGui::End();
+    ImGui::PopStyleVar(2);
+    return;
   }
 
   // Rows
@@ -93,6 +111,18 @@ void LaunchMenu::OnDraw(ImGuiIO& io) {
     ImU32 fg = enabled ? kText : kTextDisabled;
     float cy = (min.y + max.y) * 0.5f;
     float label_x = min.x + 22.0f * s;
+    if (row.kind == RowKind::kPad) {
+      // Lit while the pad has a button down, to tell identical pads apart.
+      auto it = pad_pressed_.find(row.pad.key);
+      bool pressed = it != pad_pressed_.end() && now - it->second < 0.25;
+      ImVec2 dot(label_x + 7.0f * s, cy);
+      if (pressed) {
+        dl->AddCircleFilled(dot, 7.0f * s, kButtonA);
+      } else {
+        dl->AddCircle(dot, 7.0f * s, kTextDim, 0, 2.0f * s);
+      }
+      label_x += 26.0f * s;
+    }
 
     if (tall) {
       Triangle(dl, ImVec2(label_x + 14.0f * s, cy), 22.0f * s, true, fg);
@@ -104,33 +134,44 @@ void LaunchMenu::OnDraw(ImGuiIO& io) {
     }
 
     bool clicked = enabled && hovered && ImGui::IsMouseClicked(ImGuiMouseButton_Left);
+    ImRect text;
     if (auto value = Value(row)) {
       float right = max.x - 22.0f * s;
-      bool arrows = focused && enabled;
+      bool arrows = focused && enabled && Cycles(row);
       float text_right = arrows ? right - 24.0f * s : right;
-      ImRect text = PaintText(dl, RegularFont(), 23.0f * s * row_scale, ImVec2(text_right, cy), fg,
-                              *value, 1.0f);
+      text = PaintText(dl, RegularFont(), 23.0f * s * row_scale, ImVec2(text_right, cy), fg,
+                       *value, 1.0f);
       if (arrows) {
         Triangle(dl, ImVec2(right - 6.0f * s, cy), 13.0f * s, true, fg);
         Triangle(dl, ImVec2(text.Min.x - 18.0f * s, cy), 13.0f * s, false, fg);
       }
-      if (clicked) {
-        // Left of the value steps back, anywhere else forward.
-        focus_ = i;
-        Change(row, io.MousePos.x < text.Min.x + 8.0f * s ? -1 : 1);
-      }
-    } else if (clicked) {
+    }
+    if (clicked) {
       focus_ = i;
-      Activate(i);
-      if (finished_) {
-        ImGui::End();
-        ImGui::PopStyleVar(2);
-        return;
+      if (Cycles(row)) {
+        // Left of the value steps back, anywhere else forward.
+        Change(row, io.MousePos.x < text.Min.x + 8.0f * s ? -1 : 1);
+      } else {
+        Page page = page_;
+        Activate(i);
+        if (finished_) {
+          ImGui::End();
+          ImGui::PopStyleVar(2);
+          return;
+        }
+        if (page_ != page) {
+          break;  // the rows were replaced; the new page draws next frame
+        }
       }
     }
   }
 
-  if (!message_.empty()) {
+  if (page_ == Page::kControls && pads_.empty() && !KeyboardMapped()) {
+    PaintText(dl, RegularFont(), 18.0f * s, ImVec2(margin, y + 8.0f * s), kTextDim,
+              KeyboardAvailable() ? "No controllers connected. Map keyboard to play with the keyboard."
+                                  : "No controllers connected.",
+              0.0f, 0.0f);
+  } else if (!message_.empty()) {
     PaintText(dl, RegularFont(), 18.0f * s, ImVec2(margin, y + 8.0f * s), kError, message_, 0.0f, 0.0f);
   } else if (in_game_ && RestartPending()) {
     PaintText(dl, RegularFont(), 18.0f * s, ImVec2(margin, y + 8.0f * s), kTextDim,
@@ -144,7 +185,9 @@ void LaunchMenu::OnDraw(ImGuiIO& io) {
   float cy = bar_min.y + 26.0f * s;
   x += DrawHint(dl, ImVec2(x, cy), Glyph::kA, "Select", s);
   x += DrawHint(dl, ImVec2(x, cy), Glyph::kArrows, "Change", s);
-  if (in_game_) {
+  if (page_ == Page::kControls) {
+    DrawHint(dl, ImVec2(x, cy), Glyph::kB, "Back", s);
+  } else if (in_game_) {
     DrawHint(dl, ImVec2(x, cy), Glyph::kB, "Resume", s);
   } else {
     x += DrawHint(dl, ImVec2(x, cy), Glyph::kB, "Quit", s);

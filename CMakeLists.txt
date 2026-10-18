@@ -42,7 +42,10 @@ add_library(rexlauncher STATIC
     src/menu.cpp
     src/menu_draw.cpp
     src/input.cpp
+    src/keyboard.cpp
+    src/keyboard_page.cpp
     src/options.cpp
+    src/ports.cpp
     src/settings.cpp
     src/draw.cpp
     src/fonts.cpp

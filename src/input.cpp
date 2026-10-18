@@ -126,6 +126,16 @@ std::vector<Action> MenuInput::Poll() {
 
 // --- The SDK's pads (in-game chord) ---------------------------------------------
 
+bool PadHasInput(SDL_Gamepad* pad) {
+  for (int b = 0; b < SDL_GAMEPAD_BUTTON_COUNT; ++b) {
+    if (SDL_GetGamepadButton(pad, SDL_GamepadButton(b))) {
+      return true;
+    }
+  }
+  return SDL_GetGamepadAxis(pad, SDL_GAMEPAD_AXIS_LEFT_TRIGGER) > 8000 ||
+         SDL_GetGamepadAxis(pad, SDL_GAMEPAD_AXIS_RIGHT_TRIGGER) > 8000;
+}
+
 bool ReadPadsForMenu(bool& chord) {
   chord = false;
   bool any = false;
@@ -138,11 +148,7 @@ bool ReadPadsForMenu(bool& chord) {
     }
     chord |= SDL_GetGamepadButton(pad, SDL_GAMEPAD_BUTTON_BACK) &&
              SDL_GetGamepadButton(pad, SDL_GAMEPAD_BUTTON_START);
-    for (int b = 0; b < SDL_GAMEPAD_BUTTON_COUNT; ++b) {
-      any |= SDL_GetGamepadButton(pad, SDL_GamepadButton(b));
-    }
-    any |= SDL_GetGamepadAxis(pad, SDL_GAMEPAD_AXIS_LEFT_TRIGGER) > 8000 ||
-           SDL_GetGamepadAxis(pad, SDL_GAMEPAD_AXIS_RIGHT_TRIGGER) > 8000;
+    any |= PadHasInput(pad);
   }
   SDL_free(ids);
   return any;

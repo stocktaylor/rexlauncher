@@ -7,6 +7,8 @@
 //   menu_draw.cpp    the menu dialog: drawing and mouse
 //   input.*          gamepad and keyboard input
 //   options.*        standard option rows and the cvar changes behind them
+//   ports.*          the Controls page's controller-to-player assignment
+//   keyboard.*, keyboard_page.cpp  the keyboard as a virtual controller
 //   settings.*       saving to the config file, settings restart
 //   draw.*, theme.h, fonts.*  drawing helpers, colors, fonts (ConfigureFonts)
 

@@ -43,6 +43,7 @@
 
 #pragma once
 
+#include <filesystem>
 #include <functional>
 #include <optional>
 #include <string>
@@ -88,6 +89,12 @@ struct Config {
   std::vector<Option> extra;
   // Rendering resolution, display mode, window size, upscaling filter, VSync.
   bool standard_options = true;
+  // Of those, display mode and window size: off for an app that sets its
+  // window itself.
+  bool display_options = true;
+  // The Controls page: controller-to-player assignment, and mapping the
+  // keyboard as a virtual controller.
+  bool controls = true;
 };
 
 // Registers the menu fonts (call from ReXApp::OnConfigureFonts). Without it
@@ -102,10 +109,15 @@ std::optional<rex::PathConfig> Show(rex::ui::ImGuiDrawer* imgui_drawer,
                                     const rex::PathConfig& defaults,
                                     std::function<void(rex::PathConfig)> resume, Config config);
 
+// For an app that doesn't show the menu before it starts (no Show): the Config
+// and config file the in-game menu uses. Call before EnableInGameMenu.
+void ConfigureInGameMenu(Config config, std::filesystem::path config_path);
+
 // Lets the player open the menu during the game (call from
-// ReXApp::OnPostSetup, after Show). Replaces the input system's active
+// ReXApp::OnPostSetup, after Show or ConfigureInGameMenu). Replaces the input system's active
 // callback; the SDK's own overlays still block game input while they hold the
-// mouse.
+// mouse. With the Controls page it also replaces the input system's device
+// assignment, so controllers play as the players chosen there.
 void EnableInGameMenu(rex::ui::ImGuiDrawer* imgui_drawer,
                       rex::ui::WindowedAppContext& app_context, rex::Runtime* runtime);
 

@@ -16,6 +16,7 @@
 
 #include "input.h"
 #include "menu.h"
+#include "ports.h"
 
 namespace rexlauncher {
 
@@ -91,6 +92,11 @@ void SendSystemUINotification(bool showing) {
   }
 }
 
+void ConfigureInGameMenu(Config config, std::filesystem::path config_path) {
+  State().config = std::move(config);
+  State().config_path = std::move(config_path);
+}
+
 void EnableInGameMenu(rex::ui::ImGuiDrawer* imgui_drawer,
                       rex::ui::WindowedAppContext& app_context, rex::Runtime* runtime) {
   auto& g = State();
@@ -112,8 +118,11 @@ void EnableInGameMenu(rex::ui::ImGuiDrawer* imgui_drawer,
     cvars.push_back(option.cvar);
   }
   if (g.config.standard_options) {
-    for (const char* cvar : {"resolution_scale", "present_effect", "vsync", "fullscreen"}) {
+    for (const char* cvar : {"resolution_scale", "present_effect", "vsync"}) {
       cvars.push_back(cvar);
+    }
+    if (g.config.display_options) {
+      cvars.push_back("fullscreen");
     }
   }
   for (const auto& cvar : cvars) {
@@ -123,6 +132,9 @@ void EnableInGameMenu(rex::ui::ImGuiDrawer* imgui_drawer,
   }
 
   input->SetActiveCallback(GameInputActive);
+  if (g.config.controls) {
+    InstallPortAssignment(input);  // the Controls page's choices
+  }
   rex::ui::RegisterBind("bind_launcher_menu", "F1", "Open the game menu (rexlauncher)",
                         [] { ToggleInGameMenu(); });
 }
